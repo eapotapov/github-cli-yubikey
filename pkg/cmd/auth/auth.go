@@ -2,6 +2,7 @@ package auth
 
 import (
 	"github.com/cli/cli/v2/internal/gh/ghtelemetry"
+	"github.com/cli/cli/v2/internal/yubikey"
 	gitCredentialCmd "github.com/cli/cli/v2/pkg/cmd/auth/gitcredential"
 	authLoginCmd "github.com/cli/cli/v2/pkg/cmd/auth/login"
 	authLogoutCmd "github.com/cli/cli/v2/pkg/cmd/auth/logout"
@@ -10,6 +11,7 @@ import (
 	authStatusCmd "github.com/cli/cli/v2/pkg/cmd/auth/status"
 	authSwitchCmd "github.com/cli/cli/v2/pkg/cmd/auth/switch"
 	authTokenCmd "github.com/cli/cli/v2/pkg/cmd/auth/token"
+	authYubikeyCmd "github.com/cli/cli/v2/pkg/cmd/auth/yubikey"
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -34,6 +36,13 @@ func NewCmdAuth(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder) *c
 	cmd.AddCommand(authSetupGitCmd.NewCmdSetupGit(f, nil))
 	cmd.AddCommand(authTokenCmd.NewCmdToken(f, nil))
 	cmd.AddCommand(authSwitchCmd.NewCmdSwitch(f, nil))
+
+	if yubikey.Enabled() {
+		cmd.AddCommand(authYubikeyCmd.NewCmdSetup(f))
+		cmd.AddCommand(authYubikeyCmd.NewCmdUnlock(f))
+		cmd.AddCommand(authYubikeyCmd.NewCmdLock(f))
+		cmd.AddCommand(authYubikeyCmd.NewCmdAgent(f))
+	}
 
 	cmdutil.DisableTelemetryForSubcommands(cmd)
 

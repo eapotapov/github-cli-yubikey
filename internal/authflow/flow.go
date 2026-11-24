@@ -3,6 +3,7 @@ package authflow
 import (
 	"bufio"
 	"fmt"
+	"github.com/cli/cli/v2/internal/yubikey"
 	"io"
 	"net/http"
 	"net/url"
@@ -165,6 +166,11 @@ func (c cfg) APIHostForHost(string) (string, bool) {
 }
 
 func getViewer(httpClient *http.Client, hostname, token string) (string, error) {
+	if yubikey.Enabled() {
+		// The usual lookup below follows gh's api_host setting, which would send this freshly issued token to
+		// whatever server the config file names. Ask the host's own API address instead.
+		return yubikey.TokenOwner(httpClient, hostname, token)
+	}
 	authedClient := *httpClient
 	authedClient.Transport = api.AddAuthTokenHeaderWithRefresh(httpClient.Transport, cfg{token: token})
 	return api.CurrentLoginName(api.NewClientFromHTTP(&authedClient), hostname)

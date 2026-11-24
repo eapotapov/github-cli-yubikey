@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cli/cli/v2/internal/yubikey"
+
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/internal/gh/ghtelemetry"
 	accessibilityCmd "github.com/cli/cli/v2/pkg/cmd/accessibility"
@@ -90,6 +92,13 @@ func NewCmdRoot(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, ve
 				} else {
 					fmt.Fprint(io.ErrOut, authHelp())
 				}
+				return &AuthError{}
+			}
+
+			// Under the YubiKey gate, being logged in is not enough: commands that need credentials can only run
+			// while a session is unlocked. Say so up front rather than letting the request fail as unauthenticated.
+			if yubikey.Enabled() && cmdutil.IsAuthCheckEnabled(cmd) && len(yubikey.Client{}.Sessions()) == 0 {
+				fmt.Fprintln(io.ErrOut, "gh is locked. To use your GitHub account, plug in your YubiKey and run:  gh auth unlock")
 				return &AuthError{}
 			}
 

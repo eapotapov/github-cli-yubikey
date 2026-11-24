@@ -1,4 +1,18 @@
-# GitHub CLI
+# GitHub CLI with a YubiKey
+
+![GitHub CLI with a YubiKey](docs/yubikey/banner.jpg)
+
+This is an unofficial fork of [GitHub CLI](https://github.com/cli/cli). GitHub does not make or support it.
+
+Stock `gh` keeps its token in the macOS keychain, where any program running as you can read it. This fork keeps an encrypted refresh token instead, and decrypting it takes a YubiKey, its PIN, and a touch. `gh auth unlock` opens a session, for an hour by default. `gh auth lock` closes it and revokes the session's token, and so does pulling the YubiKey out.
+
+The fork runs on macOS only and has not been audited.
+
+[YUBIKEY.md](YUBIKEY.md) covers the commands, the design, how to build and install, and what the fork does not protect against.
+
+Everything below is the upstream README. Its installation instructions install stock `gh`, not this fork.
+
+## Upstream README
 
 GitHub CLI, or the gh CLI, is GitHub on the command line. It brings pull requests, issues, and other GitHub concepts to the terminal next to where you are already working with `git` and your code.
 
@@ -24,12 +38,6 @@ gh skill install cli/cli gh --scope user
 # Update the skill after a `gh` release
 gh skill update gh
 ```
-
-## Contributing
-
-If anything feels off or if you feel that some functionality is missing, please check out the [contributing page](.github/CONTRIBUTING.md). There you will find instructions for sharing your feedback, building the tool locally, and submitting pull requests to the project.
-
-If you are a hubber and are interested in shipping new commands for the CLI, check out our [doc on internal contributions](docs/working-with-us.md)
 
 <!-- this anchor is linked to from elsewhere, so avoid renaming it -->
 ## Installation

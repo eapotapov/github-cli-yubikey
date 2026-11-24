@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/cli/cli/v2/internal/yubikey"
 	"io"
 	"net/http"
 	"os"
@@ -131,7 +132,12 @@ func (m *Manager) Dispatch(args []string, stdin io.Reader, stdout, stderr io.Wri
 		externalCmd = m.newCommand(shExe, forwardArgs...)
 	}
 	// Tell the extension that gh dispatched it and provide a reliable path back to this executable.
-	externalCmd.Env = append(externalCmd.Environ(), "GH_EXTENSION=1", "GH_PATH="+m.ghPath)
+	env := externalCmd.Environ()
+	if yubikey.Enabled() {
+		// An extension, like gh itself, may only get credentials from an unlocked session.
+		env = yubikey.StripTokenEnv(env)
+	}
+	externalCmd.Env = append(env, "GH_EXTENSION=1", "GH_PATH="+m.ghPath)
 
 	externalCmd.Stdin = stdin
 	externalCmd.Stdout = stdout

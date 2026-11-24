@@ -16,6 +16,7 @@ import (
 	"github.com/cli/cli/v2/internal/flock"
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/keyring"
+	"github.com/cli/cli/v2/internal/yubikey"
 	ghConfig "github.com/cli/go-gh/v2/pkg/config"
 )
 
@@ -143,12 +144,27 @@ func (c *AuthConfig) reload() error {
 // runs under the cross-process refresh lock and reloads the configuration first, so it cannot interleave with a
 // concurrent configuration read-modify-write in another gh process.
 func (c *AuthConfig) LoginRefreshable(hostname, username string, credential gh.Credential, gitProtocol string, secureStorage bool) (bool, error) {
+	if yubikey.Enabled() {
+		// A session left over from before this sign-in is ended first, whichever account it belongs to.
+		gatedEndSession(hostname, "")
+	}
 	var insecureStorageUsed bool
 	err := c.withFreshConfigForRefresh(func(lockErr error) error {
+		if yubikey.Enabled() {
+			if lockErr != nil {
+				return errGateLockUnavailable
+			}
+			return c.gatedLoginRefreshable(hostname, username, credential, gitProtocol)
+		}
 		var err error
 		insecureStorageUsed, err = c.loginRefreshable(hostname, username, credential, gitProtocol, secureStorage)
 		return err
 	})
+	if yubikey.Enabled() {
+		// An unlock that was in progress may have started an agent between the check above and the lock being
+		// taken. Its session belongs to the credential this sign-in just replaced, so end it too.
+		gatedEndSession(hostname, "")
+	}
 	return insecureStorageUsed, err
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"fmt"
+	"github.com/cli/cli/v2/internal/yubikey"
 	"net/url"
 	"strings"
 
@@ -166,7 +167,10 @@ func helperRun(opts *CredentialOptions) error {
 	//
 	// Whether a caching helper sits in front of gh is the user's own git configuration; gh only
 	// configures itself as the credential helper for its hosts, so this is an uncommon setup.
-	if authtypeCapability && cred.IsRefreshable() {
+	// A YubiKey session token is short lived as well, and is revoked when the session ends, so it gets the same
+	// treatment even though gh holds no refresh token for it.
+	shortLived := cred.IsRefreshable() || cred.Source == yubikey.TokenSource
+	if authtypeCapability && shortLived {
 		// Express the credential through the opaque credential field so we can also mark it
 		// ephemeral. authtype=Basic with base64(user:token) produces the same Authorization header
 		// as the username/password form, so this is byte-identical Basic auth on the wire.
@@ -181,7 +185,7 @@ func helperRun(opts *CredentialOptions) error {
 		return nil
 	}
 
-	if cred.IsRefreshable() {
+	if shortLived {
 		// Older git does not offer the authtype capability, so we cannot mark the token ephemeral.
 		// Warn in case a caching helper is chained in front of gh and would serve a stale token.
 		fmt.Fprint(opts.IO.ErrOut, "WARNING: gh: this git version cannot mark the expiring token as non-cacheable; upgrade to git 2.46 or newer, or avoid a credential caching helper, to prevent a stale token being reused\n")

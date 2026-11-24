@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cli/cli/v2/internal/yubikey"
+
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/api"
 	"github.com/cli/cli/v2/internal/authflow"
@@ -71,6 +73,10 @@ func ShouldCopyToClipboard(cfg gh.Config, flagValue *bool) bool {
 // --expiring flag value wins; when the flag is unset it falls back to the expiring_credentials config setting
 // for the host.
 func ShouldUseExpiring(cfg gh.Config, flagValue *bool, hostname string) bool {
+	if yubikey.Enabled() {
+		// Only an expiring credential has a refresh token to seal to the YubiKey.
+		return true
+	}
 	if flagValue != nil {
 		return *flagValue
 	}
@@ -86,7 +92,7 @@ func Login(opts *LoginOptions) error {
 	// Choose how to authenticate before anything that depends on expiring intent. A pasted token can never be
 	// expiring, so the effective intent is only known once the method is chosen.
 	var authMode int
-	if opts.Web || opts.ExpiringExplicitlyRequested {
+	if opts.Web || opts.ExpiringExplicitlyRequested || yubikey.Enabled() {
 		// When the user explicitly passes --expiring, force the web flow so the paste option cannot silently ignore
 		// that request. A config-derived preference does not suppress paste: choosing it yields a non-expiring token.
 		authMode = 0
@@ -318,6 +324,9 @@ func Login(opts *LoginOptions) error {
 	}
 
 	fmt.Fprintf(opts.IO.ErrOut, "%s Logged in as %s\n", cs.SuccessIcon(), cs.Bold(username))
+	if yubikey.Enabled() {
+		fmt.Fprintf(opts.IO.ErrOut, "%s gh is locked until you run %s\n", cs.Yellow("!"), cs.Bold("gh auth unlock"))
+	}
 	if userWasAlreadyLoggedIn {
 		fmt.Fprintf(opts.IO.ErrOut, "%s You were already logged in to this account\n", cs.WarningIcon())
 	}

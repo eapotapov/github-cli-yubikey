@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"github.com/cli/cli/v2/internal/yubikey"
 	"strings"
 
 	"github.com/MakeNowJust/heredoc"
@@ -93,7 +94,8 @@ func requireOAuthToken(f *cmdutil.Factory) error {
 	// be rejected here before the CAPI refresh path can run.
 	tokenSourceIsDeviceFlow := cred.Source == gh.TokenSourceOAuthToken ||
 		cred.Source == gh.TokenSourceKeyring ||
-		cred.Source == gh.TokenSourceRefreshableOAuthToken
+		cred.Source == gh.TokenSourceRefreshableOAuthToken ||
+		cred.Source == yubikey.TokenSource
 	// Tokens with "gho_" prefix are OAuth tokens.
 	//
 	// TODO: this matches a token prefix itself. It could ask

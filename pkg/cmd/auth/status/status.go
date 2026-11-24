@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cli/cli/v2/internal/yubikey"
+	authYubikeyCmd "github.com/cli/cli/v2/pkg/cmd/auth/yubikey"
+
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/api"
 	"github.com/cli/cli/v2/internal/config"
@@ -275,6 +278,11 @@ func statusRun(opts *StatusOptions) error {
 		return err
 	}
 	authCfg := cfg.Authentication()
+
+	if yubikey.Enabled() {
+		// The stock report is built around inspecting stored tokens, which this build does not have.
+		return authYubikeyCmd.PrintStatus(opts.IO, authCfg, opts.Hostname)
+	}
 
 	stderr := opts.IO.ErrOut
 	stdout := opts.IO.Out

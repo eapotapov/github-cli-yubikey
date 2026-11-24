@@ -12,6 +12,7 @@ import (
 
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/keyring"
+	"github.com/cli/cli/v2/internal/yubikey"
 	o "github.com/cli/cli/v2/pkg/option"
 	ghauth "github.com/cli/go-gh/v2/pkg/auth"
 	ghConfig "github.com/cli/go-gh/v2/pkg/config"
@@ -319,6 +320,10 @@ func (c *AuthConfig) ActiveToken(hostname string) gh.Credential {
 		return gh.Credential{Source: source, Token: token}
 	}
 
+	if yubikey.Enabled() {
+		return c.gatedActiveToken(hostname)
+	}
+
 	token, source := ghauth.TokenFromEnvOrConfig(hostname)
 	if token != "" {
 		return gh.Credential{Source: source, Token: token}
@@ -382,6 +387,10 @@ func (c *AuthConfig) HasEnvToken() bool {
 			return true
 		}
 	}
+	if yubikey.Enabled() {
+		// Tokens from the environment are ignored: the YubiKey session is the only source of credentials.
+		return false
+	}
 	// TODO: This is _extremely_ knowledgeable about the implementation of TokenFromEnvOrConfig
 	// It has to use a hostname that is not going to be found in the hosts so that it
 	// can guarantee that tokens will only be returned from a set env var.
@@ -401,6 +410,13 @@ func (c *AuthConfig) SetActiveToken(token, source string) {
 // TokenFromKeyring will retrieve the auth token for the given hostname,
 // only searching in encrypted storage.
 func (c *AuthConfig) TokenFromKeyring(hostname string) (string, error) {
+	if yubikey.Enabled() {
+		// The session token is this build's securely stored token.
+		if session, ok := c.gatedSession(hostname); ok {
+			return session.Token, nil
+		}
+		return "", keyring.ErrNotFound
+	}
 	return keyring.Get(keyringServiceName(hostname), "")
 }
 
@@ -413,6 +429,11 @@ func (c *AuthConfig) TokenFromKeyring(hostname string) (string, error) {
 func (c *AuthConfig) TokenFromKeyringForUser(hostname, username string) (string, error) {
 	if username == "" {
 		return "", errors.New("username cannot be blank")
+	}
+
+	if yubikey.Enabled() {
+		credential, err := c.gatedTokenForUser(hostname, username)
+		return credential.Token, err
 	}
 
 	return keyring.Get(keyringServiceName(hostname), username)
@@ -501,6 +522,9 @@ func (c *AuthConfig) SetDefaultHost(host, source string) {
 // If the encrypt option is specified it will first try to store the auth token
 // in encrypted storage and will fall back to the plain text config file.
 func (c *AuthConfig) Login(hostname, username, token, gitProtocol string, secureStorage bool) (bool, error) {
+	if yubikey.Enabled() {
+		return false, errGateNeedsExpiring
+	}
 	// Run under the shared refresh lock, like LoginRefreshable and Logout, so login serializes against an in-flight
 	// refresh and wins either ordering: a refresh that persists first is superseded by the credential stored here, and
 	// a refresh still waiting on the lock reloads afterwards, finds the refreshable record removed below, and bails
@@ -571,7 +595,8 @@ func (c *AuthConfig) SwitchUser(hostname, user string) error {
 	}
 
 	previousSource := c.ActiveToken(hostname).Source
-	if previousSource != gh.TokenSourceKeyring &&
+	if !yubikey.Enabled() &&
+		previousSource != gh.TokenSourceKeyring &&
 		previousSource != gh.TokenSourceOAuthToken &&
 		previousSource != gh.TokenSourceRefreshableOAuthToken {
 		return fmt.Errorf("currently active token for %s is from %s", hostname, previousSource)
@@ -599,22 +624,39 @@ func (c *AuthConfig) SwitchUser(hostname, user string) error {
 // Logout will remove user, git protocol, and auth token for the given hostname.
 // It will remove the auth token from the encrypted storage if it exists there.
 func (c *AuthConfig) Logout(hostname, username string) error {
+	if yubikey.Enabled() {
+		gatedEndSession(hostname, username)
+	}
 	// Run under the shared refresh lock so logout wins any race with an in-flight refresh: a concurrent refresh
 	// cannot persist a rotated credential after logout has removed the account and reported success.
-	return c.withFreshConfigForRefresh(func(lockErr error) error {
+	err := c.withFreshConfigForRefresh(func(lockErr error) error {
 		users := c.UsersForHost(hostname)
 
 		// The user's per-user keyring records are not covered by removing config keys, so delete them explicitly.
 		// Historically the per-user token was only removed in the single-user branch, leaking it when logging out of a
 		// multi-user host.
-		_ = keyring.Delete(refreshableServiceName(hostname), username)
-		_ = keyring.Delete(keyringServiceName(hostname), username)
+		// Under the YubiKey gate the keyring is never used, so it is left alone: it may hold credentials that belong
+		// to a stock gh sharing this machine.
+		gated := yubikey.Enabled()
+		if gated {
+			if lockErr != nil {
+				return errGateLockUnavailable
+			}
+			if err := gatedForget(hostname, username); err != nil {
+				return err
+			}
+		} else {
+			_ = keyring.Delete(refreshableServiceName(hostname), username)
+			_ = keyring.Delete(keyringServiceName(hostname), username)
+		}
 
 		// If there is only one (or zero) users, then we remove the host
 		// and unset the keyring tokens.
 		if len(users) < 2 {
 			_ = c.cfg.Remove([]string{hostsKey, hostname})
-			_ = keyring.Delete(keyringServiceName(hostname), "")
+			if !gated {
+				_ = keyring.Delete(keyringServiceName(hostname), "")
+			}
 			return ghConfig.Write(c.cfg)
 		}
 
@@ -637,6 +679,12 @@ func (c *AuthConfig) Logout(hostname, username string) error {
 		// And activate them
 		return c.activateUser(hostname, users[switchUserIdx])
 	})
+	if yubikey.Enabled() && err == nil {
+		// An unlock that was in progress may have started an agent between the check above and the lock being
+		// taken. The account is gone now, so that session must not go on being served.
+		gatedEndSessionFor(hostname, username)
+	}
+	return err
 }
 
 func (c *AuthConfig) activateUser(hostname, user string) error {
@@ -659,6 +707,12 @@ func (c *AuthConfig) activateUser(hostname, user string) error {
 // config, so it can also be used to restore state after a failed switch. It reports whether a credential was found
 // for the user.
 func (c *AuthConfig) setActiveCredential(hostname, user string) (bool, error) {
+	if yubikey.Enabled() {
+		// There is no host-level active copy to maintain: the active user key selects the vault, and the session
+		// agent only serves a session that belongs to that user.
+		return yubikey.HasVault(hostname, user), nil
+	}
+
 	// Idempotently clear the non-expiring active representations so that no stale token can outrank the credential we
 	// are about to activate. Refreshable credentials have no host-level active copy, so there is nothing to clear for
 	// them; they are resolved per-user through the active user key.
@@ -712,6 +766,10 @@ func (c *AuthConfig) UsersForHost(hostname string) []string {
 // setActiveCredential so activation and resolution always agree on which credential is current, even in the mixed
 // state that should never occur because logging in with one kind removes the other.
 func (c *AuthConfig) TokenForUser(hostname, user string) (gh.Credential, error) {
+	if yubikey.Enabled() {
+		return c.gatedTokenForUser(hostname, user)
+	}
+
 	if token, err := keyring.Get(keyringServiceName(hostname), user); err == nil {
 		return gh.Credential{Source: gh.TokenSourceKeyring, Token: token}, nil
 	}

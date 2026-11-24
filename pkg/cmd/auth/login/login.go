@@ -1,10 +1,14 @@
 package login
 
 import (
+	"errors"
 	"fmt"
+	authYubikeyCmd "github.com/cli/cli/v2/pkg/cmd/auth/yubikey"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/cli/cli/v2/internal/yubikey"
 
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/git"
@@ -64,6 +68,11 @@ func NewCmdLogin(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder, r
 		Prompter:        f.Prompter,
 		Browser:         f.Browser,
 		Telemetry:       telemetry,
+	}
+	if yubikey.Enabled() {
+		// The sign-in exchange returns the refresh token in a response body, so it must go straight to the host,
+		// untraced and unaffected by gh's configuration.
+		opts.PlainHttpClient = authYubikeyCmd.QuietPlainHTTPClient(f)
 	}
 
 	var tokenStdin bool
@@ -220,6 +229,16 @@ func loginRun(opts *LoginOptions) error {
 	// https://github.com/cli/go-gh/pull/105
 	hostname = strings.ToLower(hostname)
 
+	if yubikey.Enabled() {
+		if opts.Token != "" {
+			return errors.New("this build of gh only stores expiring credentials protected by a YubiKey; sign in with a web browser instead of `--with-token`")
+		}
+		// Fail before the browser round trip if there is no YubiKey to seal the credential to.
+		if _, err := yubikey.ReadRecipient(); err != nil {
+			return err
+		}
+	}
+
 	if src, writeable := shared.AuthTokenWriteable(authCfg, hostname); !writeable {
 		fmt.Fprintf(opts.IO.ErrOut, "The value of the %s environment variable is being used for authentication.\n", src)
 		fmt.Fprint(opts.IO.ErrOut, "To have GitHub CLI store credentials instead, first clear the value from the environment.\n")
@@ -230,7 +249,6 @@ func loginRun(opts *LoginOptions) error {
 	if err != nil {
 		return err
 	}
-
 	httpClient, err := opts.HttpClient()
 	if err != nil {
 		return err
@@ -286,8 +304,11 @@ func loginRun(opts *LoginOptions) error {
 				GitClient: opts.GitClient,
 			},
 		},
-		SecureStorage:               !opts.InsecureStorage,
-		SkipSSHKeyPrompt:            opts.SkipSSHKeyPrompt,
+		SecureStorage: !opts.InsecureStorage,
+		// Uploading an SSH key during sign-in would send the freshly issued token through gh's ordinary client,
+		// which follows routing settings from the config file. Under the gate that waits for an unlocked session:
+		// `gh ssh-key add` does the same job.
+		SkipSSHKeyPrompt:            opts.SkipSSHKeyPrompt || yubikey.Enabled(),
 		CopyToClipboard:             copyToClipboard,
 		Expiring:                    shared.ShouldUseExpiring(cfg, opts.Expiring, hostname),
 		ExpiringExplicitlyRequested: opts.Expiring != nil && *opts.Expiring,

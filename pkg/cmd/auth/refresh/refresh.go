@@ -2,9 +2,12 @@ package refresh
 
 import (
 	"fmt"
+	authYubikeyCmd "github.com/cli/cli/v2/pkg/cmd/auth/yubikey"
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/cli/cli/v2/internal/yubikey"
 
 	"github.com/MakeNowJust/heredoc"
 	"github.com/cli/cli/v2/git"
@@ -56,6 +59,10 @@ func NewCmdRefresh(f *cmdutil.Factory, telemetry ghtelemetry.InvocationRecorder,
 		GitClient:       f.GitClient,
 		Prompter:        f.Prompter,
 		Telemetry:       telemetry,
+	}
+	if yubikey.Enabled() {
+		// The sign-in exchange returns the refresh token in a response body, so it must never be traced.
+		opts.PlainHttpClient = authYubikeyCmd.QuietPlainHTTPClient(f)
 	}
 
 	cmd := &cobra.Command{
@@ -187,6 +194,10 @@ func refreshRun(opts *RefreshOptions) error {
 		expiring = *opts.Expiring
 	} else {
 		expiring = authCfg.ActiveToken(hostname).IsRefreshable()
+	}
+	if yubikey.Enabled() {
+		// Only an expiring credential has a refresh token to seal to the YubiKey.
+		expiring = true
 	}
 
 	if src, writeable := shared.AuthTokenWriteable(authCfg, hostname); !writeable {

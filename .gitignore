@@ -49,3 +49,6 @@ lcov.info
 # CodeQL scratch database (regenerated locally)
 codeql-db/
 *.sarif
+
+# Local agent instructions
+/AGENTS.md

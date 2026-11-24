@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/cli/cli/v2/internal/yubikey"
 	"io"
 	"net/http"
 	"os"
@@ -175,7 +176,12 @@ func runCopilot(opts *CopilotOptions) error {
 	externalCmd.Stdin = opts.IO.In
 	externalCmd.Stdout = opts.IO.Out
 	externalCmd.Stderr = opts.IO.ErrOut
-	externalCmd.Env = append(os.Environ(), "COPILOT_GH=true")
+	env := os.Environ()
+	if yubikey.Enabled() {
+		// Copilot CLI, like gh itself, may only get gh's credentials from an unlocked session.
+		env = yubikey.StripTokenEnv(env)
+	}
+	externalCmd.Env = append(env, "COPILOT_GH=true")
 
 	if err := runExternalCmdFunc(externalCmd); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
